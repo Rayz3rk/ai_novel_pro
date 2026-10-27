@@ -1,0 +1,28 @@
+{
+  "name": "shujian-workspace",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm --filter @shujian/web build && pnpm --filter @shujian/server build",
+    "start": "pnpm --filter @shujian/server start",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "db:migrate": "pnpm --filter @shujian/server exec tsx ../../scripts/migrate-storage.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "release": "node scripts/build-release.mjs",
+    "eval:creative": "pnpm --filter @shujian/server exec tsx ../../scripts/evaluate-creative.ts",
+    "compare:creative": "pnpm --filter @shujian/server exec tsx ../../scripts/compare-creative-samples.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "fflate": "0.8.3",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}

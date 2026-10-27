@@ -1,0 +1,28 @@
+{
+  "format": "shujian-creative-evaluation-cases",
+  "version": 1,
+  "cases": [
+    {"id":"scene-plan","kind":"skill","skill":"builtin-scene-turn","task":"plan","accepted":true},
+    {"id":"dialogue-revise","kind":"skill","skill":"builtin-dialogue-subtext","task":"draft","accepted":true},
+    {"id":"relationship-discuss","kind":"skill","skill":"builtin-slow-relationship","task":"discuss","accepted":true},
+    {"id":"pov-review","kind":"skill","skill":"builtin-pov-continuity","task":"review","accepted":true},
+    {"id":"style-draft","kind":"skill","skill":"builtin-style-preservation","task":"draft","accepted":true},
+    {"id":"clean-review","kind":"skill","skill":"builtin-manuscript-clean","task":"review","accepted":true},
+    {"id":"clean-not-draft","kind":"skill","skill":"builtin-manuscript-clean","task":"draft","accepted":false},
+    {"id":"dialogue-not-extract","kind":"skill","skill":"builtin-dialogue-subtext","task":"extract","accepted":false},
+    {"id":"clean-normal-prose","kind":"clean","text":"雨停后，她把伞靠在门边。\n\n“Hello, Lin.”同学笑着说。","rules":[]},
+    {"id":"clean-prompt-residue","kind":"clean","text":"【作者本次要求】\n只输出正文。","rules":["instruction-residue"]},
+    {"id":"clean-adjacent-repeat","kind":"clean","text":"她把信封小心放回抽屉深处。\n\n她把信封小心放回抽屉深处。","rules":["adjacent-repeat"]},
+    {"id":"clean-placeholder","kind":"clean","text":"雨落在窗边。\n[待补正文]","rules":["placeholder-or-encoding"]},
+    {"id":"import-simple-method","kind":"import","markdown":"---\nname: a-small-method\ndescription: 只检查本章给定证据。\n---\n保留作者决定。","accepted":true},
+    {"id":"import-reject-tools","kind":"import","markdown":"---\nname: a-small-method\ndescription: 只检查证据\nallowed-tools: Bash\n---\n调用外部脚本。","accepted":false},
+    {"id":"import-missing-resource","kind":"import","markdown":"---\nname: a-small-method\ndescription: 只检查证据\n---\n参考[资料](../outside.md)。","accepted":false},
+    {"id":"import-safe-resource","kind":"import","markdown":"---\nname: a-small-method\ndescription: 只检查证据\n---\n参考[资料](references/a.md)。","resources":[{"path":"references/a.md","text":"本包文本示例。"}],"accepted":true},
+    {"id":"selected-voice-only","kind":"preview","scenario":"voices"},
+    {"id":"pending-preference-isolated","kind":"preview","scenario":"pending"},
+    {"id":"secret-not-in-draft","kind":"preview","scenario":"secret"},
+    {"id":"disabled-method-rejected","kind":"preview","scenario":"disabled"},
+    {"id":"optional-resource-isolated","kind":"preview","scenario":"resources"},
+    {"id":"preview-does-not-write","kind":"preview","scenario":"read-only"}
+  ]
+}

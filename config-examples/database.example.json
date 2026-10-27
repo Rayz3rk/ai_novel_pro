@@ -1,0 +1,10 @@
+{
+  "driver": "sqlite",
+  "sqlite": { "filename": "data/workspace.sqlite" },
+  "postgresql": {
+    "url": "postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/shujian_workspace",
+    "createDatabase": true,
+    "maintenanceDatabase": "postgres",
+    "statementTimeoutMs": 10000
+  }
+}

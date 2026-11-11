@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -18,7 +18,7 @@ const harness = storageHarness('workspace');
 const createApp = harness.createApp;
 
 type App = Awaited<ReturnType<typeof createApp>>;
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 const firstDocument: ManuscriptDocument = {
   type: 'doc',
@@ -475,4 +475,53 @@ describe('M1 reliable manuscript workspace', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('灯在门边。\n信在抽屉。');
   });
+  it('deletes a chapter with history, protects newer drafts and keeps story chronology', async () => {
+    const { book, chapter } = await createBook();
+    const saved = await save(chapter, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '删除前的正文。' }] }] });
+    await success('POST', `/api/chapters/${saved.id}/finalize`, { expectedVersion: saved.version });
+    const second = (await success<{chapter: Chapter}>('POST', `/api/books/${book.id}/chapters`)).chapter;
+    const stale = await app.inject({ method: 'DELETE', url: `/api/chapters/${saved.id}`, payload: { expectedVersion: 1 } });
+    expect(stale.statusCode).toBe(409);
+    await success('DELETE', `/api/chapters/${saved.id}`, { expectedVersion: saved.version });
+    expect((await app.inject({ method: 'GET', url: `/api/chapters/${saved.id}` })).statusCode).toBe(404);
+    const remaining = (await success<{chapters: ChapterSummary[]}>('GET', `/api/books/${book.id}/chapters`)).chapters;
+    expect(remaining.map(c => c.position)).toEqual([2]);
+    const directory = join(dataDir, 'backups', 'before-delete');
+    const files = await readdir(directory);
+    expect(files).toHaveLength(1);
+    const backup = JSON.parse(await readFile(join(directory, files[0]!), 'utf8')) as WorkspaceBackup;
+    const restored = await success<{books: Book[]}>('POST', '/api/backup/restore', { backup });
+    expect(restored.books[0]?.chapterCount).toBe(2);
+    await success('DELETE', `/api/chapters/${second.id}`, { expectedVersion: second.version });
+    expect((await success<{chapters: ChapterSummary[]}>('GET', `/api/books/${book.id}/chapters`)).chapters).toEqual([]);
+    expect((await success<{chapter: Chapter}>('POST', `/api/books/${book.id}/chapters`)).chapter.position).toBe(1);
+  });
+
+  it('deletes a whole book with associated story and planning history and preserves other books', async () => {
+    const { book, chapter } = await createBook();
+    const other = await createBook('另一部作品');
+    await success('POST', `/api/chapters/${chapter.id}/versions`, { expectedVersion: 1 });
+    await success('POST', `/api/books/${book.id}/story`, { kind: 'note', authority: 'setting', title: '旧设定', content: '应随作品删除', status: 'confirmed' });
+    await success('POST', `/api/books/${book.id}/plans`, { level: 'chapter', parentId: null, chapterId: chapter.id, title: '章节规划', content: '旧规划', position: 1 });
+    expect((await app.inject({ method: 'DELETE', url: `/api/books/${book.id}`, payload: { title: '错误名称' } })).statusCode).toBe(409);
+    await success('DELETE', `/api/books/${book.id}`, { title: book.title });
+    expect((await app.inject({ method: 'GET', url: `/api/books/${book.id}` })).statusCode).toBe(404);
+    expect((await success<{books: Book[]}>('GET', '/api/books')).books.map(b => b.id)).toEqual([other.book.id]);
+    const directory = join(dataDir, 'backups', 'before-delete');
+    const files = await readdir(directory);
+    const backup = JSON.parse(await readFile(join(directory, files[0]!), 'utf8')) as WorkspaceBackup;
+    const restored = await success<{books: Book[]}>('POST', '/api/backup/restore', { backup });
+    const story = await success<{entries: unknown[]}>('GET', `/api/books/${restored.books[0]!.id}/story`);
+    expect(story.entries).toHaveLength(1);
+  });
+
+  it('refuses deleting a chapter referenced by story cards without changing its manuscript', async () => {
+    const { book, chapter } = await createBook();
+    await success('POST', `/api/books/${book.id}/story`, { kind: 'note', authority: 'setting', title: '章节便签', content: '仍有关联', links: { chapterIds: [chapter.id] } });
+    const response = await app.inject({ method: 'DELETE', url: `/api/chapters/${chapter.id}`, payload: { expectedVersion: chapter.version } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json<ApiErrorBody>().error.code).toBe('CHAPTER_IN_USE');
+    expect((await getChapter(chapter.id)).id).toBe(chapter.id);
+  });
+
 });

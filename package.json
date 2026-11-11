@@ -13,6 +13,7 @@
     "start": "pnpm --filter @shujian/server start",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
+    "import:legacy": "pnpm --filter @shujian/server exec tsx ../../scripts/import-legacy.ts",
     "db:migrate": "pnpm --filter @shujian/server exec tsx ../../scripts/migrate-storage.ts",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "release": "node scripts/build-release.mjs",

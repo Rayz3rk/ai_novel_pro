@@ -1,3 +1,4 @@
+import { BackfillService, registerBackfill } from './backfill.js';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,9 @@ import staticFiles from '@fastify/static';
 import type { JsonValue } from '@shujian/contracts';
 import { AppError } from './errors.js';
 import { Store } from './store.js';
+import { BackupManager } from './backups.js';
+import { createManuscriptLifecycle } from './manuscript-lifecycle.js';
+import { deleteManuscript } from './deletion.js';
 import * as validate from './validation.js';
 import { registerAiRoutes } from './ai/index.js';
 import { registerStoryRoutes } from './story/index.js';
@@ -61,9 +65,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const ai = registerAiRoutes(app, store, { credentialDir:credentialDirectory, connectionsFile, workspaceDirectory: projectRoot });
   ai.hooks.context = (input, chapter) => {const graph=atlas.context(input,chapter);return [...story.getContext(input,chapter,graph.transform,graph.allowedIds),...graph.items,...plans.context(chapter)];};
   ai.hooks.creativity = (input, chapter, replay) => creative.materialize(input, chapter, replay);
-  ai.hooks.completed = (job) => store.db.transaction(() => story.onJobComplete(job))();
+  const backfill = new BackfillService(store, ai, story, atlas);
+  registerBackfill(app, backfill);
+  ai.hooks.completed = (job) => store.db.transaction(() => { if (backfill.isBackfill(job.id)) backfill.parse(job); else story.onJobComplete(job); })();
   store.backupExtensions = {
-    exportBook: (bookId) => ({ ai: ai.exportBook(bookId), story: JSON.parse(JSON.stringify(story.exportBook(bookId))) as JsonValue, planning: plans.exportBook(bookId), creative: creative.exportBook(bookId), atlas:atlas.exportBook(bookId) }),
+    exportBook: (bookId) => ({ ai: ai.exportBook(bookId), story: JSON.parse(JSON.stringify(story.exportBook(bookId))) as JsonValue, planning: plans.exportBook(bookId), creative: creative.exportBook(bookId), atlas:atlas.exportBook(bookId), backfill:backfill.exportBook(bookId) }),
     restoreBook: (entry, newBookId, ids) => {
       const extra = entry.extensions ?? {};
       if (extra.ai !== undefined) ai.prepareRestore(extra.ai, ids);
@@ -76,8 +82,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       creative.restoreBook(entry.book.id, newBookId, ids, extra.creative);
       ai.validateRestoredSkillBindings(newBookId);
       atlas.restoreBook(entry.book.id,newBookId,ids,extra.atlas);
+      backfill.restoreBook(extra.backfill,newBookId,ids);
     },
   };
+  const lifecycle = createManuscriptLifecycle(store);
+  lifecycle.register({name:'正文回填',sources:[],bookTables:['backfill_runs'],chapterTables:['backfill_runs']}, true);
+  const backups = new BackupManager(store, dataDir);
   app.addHook('preClose', async () => { await ai.close(); });
   app.addHook('onClose', async () => { store.close(); });
 
@@ -110,13 +120,37 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.post('/api/books', async (request, reply) => reply.code(201).send({ book: store.createBook(validate.createBook(request.body)) }));
   app.get('/api/books/:bookId', async (request) => ({ book: store.getBook(param(request, 'bookId')) }));
   app.patch('/api/books/:bookId', async (request) => ({ book: store.updateBook(param(request, 'bookId'), validate.updateBook(request.body)) }));
+  app.delete('/api/books/:bookId', async (request) => {
+    const id = param(request, 'bookId');
+    const body = validate.object(request.body);
+    if (validate.string(body.title, '作品名称', 120, 1) !== store.getBook(id).title) throw new AppError(409, 'BOOK_CHANGED', '作品名称已变化，请刷新书架后再确认删除。');
+    ai.assertCanDelete(id);
+    deleteManuscript(store, { lifecycle, backups }, id);
+    return { deleted: true };
+  });
+  app.delete('/api/chapters/:chapterId', async (request) => {
+    const id = param(request, 'chapterId');
+    const { expectedVersion } = versionBody(request.body);
+    const chapter = store.getChapter(id);
+    ai.assertCanDelete(chapter.bookId, id);
+    deleteManuscript(store, { lifecycle, backups }, chapter.bookId, id, expectedVersion);
+    return { deleted: true };
+  });
 
-  app.get('/api/books/:bookId/chapters', async (request) => ({ chapters: store.listChapters(param(request, 'bookId')) }));
+  app.get('/api/books/:bookId/chapters', async (request) => ({ chapters: store.listChapters(param(request, 'bookId'), validate.object(request.query).includeArchived === 'true') }));
   app.post('/api/books/:bookId/chapters', async (request, reply) => {
     const body = validate.object(request.body ?? {});
     const title = body.title === undefined ? undefined : validate.string(body.title, '章节标题', 200);
     const outline = body.outline === undefined ? undefined : validate.string(body.outline, '本章计划', 20_000);
     return reply.code(201).send({ chapter: store.createChapter(param(request, 'bookId'), title, outline) });
+  });
+  app.get('/api/chapters/:chapterId/references', async request => ({ references: lifecycle.chapterReferences(param(request, 'chapterId')) }));
+  app.put('/api/chapters/:chapterId/archive', async request => {
+    const { item, expectedVersion } = versionBody(request.body);
+    if (typeof item.archived !== 'boolean') validate.invalid('归档状态不正确。');
+    const id = param(request, 'chapterId');
+    ai.assertCanDelete(store.getChapter(id).bookId, id);
+    return { chapter: store.archiveChapter(id, expectedVersion, item.archived) };
   });
   app.get('/api/chapters/:chapterId', async (request) => ({ chapter: store.getChapter(param(request, 'chapterId')) }));
   app.put('/api/chapters/:chapterId/draft', async (request) => ({ chapter: store.saveDraft(param(request, 'chapterId'), validate.saveDraft(request.body)) }));
@@ -155,6 +189,22 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     return reply.header('content-type', format === 'md' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8')
       .header('content-disposition', downloadName(output.book.title, format))
       .send(output.text);
+  });
+
+  app.get('/api/backups', async () => backups.catalog());
+  app.post('/api/backups', async (_request, reply) => reply.code(201).send({ backup: backups.create() }));
+  app.put('/api/backups/settings', async request => {
+    backups.settings(validate.integer(validate.object(request.body).retentionDays, '保留天数', 0, 3650));
+    return { retentionDays: backups.catalog().retentionDays };
+  });
+  app.get('/api/backups/cleanup', async () => backups.cleanupPreview());
+  app.post('/api/backups/cleanup', async request => backups.cleanup(validate.string(validate.object(request.body).fingerprint, '预览标识', 64, 64)));
+  const backupId = (request: FastifyRequest) => validate.string(validate.object(request.query).id, '备份标识', 250, 1);
+  app.get('/api/backups/preview', async request => ({ backup: backups.preview(backupId(request)) }));
+  app.get('/api/backups/download', async (request, reply) => reply.header('content-disposition', 'attachment; filename="shujian-backup.json"').send(backups.download(backupId(request))));
+  app.post('/api/backups/restore', async request => {
+    const body = validate.object(request.body);
+    return { books: backups.restore(validate.string(body.id, '备份标识', 250, 1), validate.string(body.fingerprint, '预览标识', 64, 64)) };
   });
 
   app.get('/api/backup', async (_request, reply) => {

@@ -17,3 +17,4 @@
 @media(max-width:720px){.mobile-chapters{display:inline-flex}.version-dialog{width:100vw}.workbench-brand .book-title-button{max-width:84px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
+.button.danger{background:#a53636;color:white;border-color:#a53636}.danger-text{color:#a53636}.outline-field input{width:100%;padding:10px;border:1px solid #d8d4ca;border-radius:6px;margin-top:8px;font:inherit}

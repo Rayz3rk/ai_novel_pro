@@ -48,10 +48,12 @@ export function createJob(value: unknown): CreateAiJobInput {
   }
   if (kind === 'revise' && !selection) v.invalid('局部改稿需要选区。');
   if(item.source!==undefined&&!['draft','final'].includes(String(item.source)))v.invalid('资料来源不正确。');
+  if(item.backfill!==undefined&&(typeof item.backfill!=='boolean'||item.backfill&&(kind!=='extract'||item.source!=='final')))v.invalid('正文回填必须使用定稿提取。');
   return {
     requestId: v.string(item.requestId, '请求标识', 128, 1), kind: kind as CreateAiJobInput['kind'],
     chapterId: v.string(item.chapterId, '章节 ID', 128, 1), expectedVersion: v.integer(item.expectedVersion, '草稿版本', 1),
     instruction: v.string(item.instruction, '创作要求', 20_000, 1),
+    ...(item.backfill===undefined?{}:{backfill:item.backfill as boolean}),
     ...(item.source===undefined?{}:{source:item.source as 'draft'|'final'}),
     ...(selection ? { selection } : {}),
     ...(item.pov === undefined ? {} : { pov: v.string(item.pov, '视角人物', 200) }),

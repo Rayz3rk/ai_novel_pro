@@ -15,6 +15,7 @@ export type AiTaskKind = 'discuss' | 'plan' | 'draft' | 'revise' | 'review' | 'e
 export type AiJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled';
 export interface TextSelection { from: number; to: number; text: string }
 export interface CreateAiJobInput {
+  backfill?: boolean;
   requestId: string; kind: AiTaskKind; chapterId: string; expectedVersion: number;
   instruction: string; selection?: TextSelection; pov?: string; pinnedEntryIds?: string[]; excludedEntryIds?: string[];
   source?: 'draft' | 'final';
@@ -35,6 +36,7 @@ export interface ModelCall {
   requestMessages?: PromptMessage[]; promptHash?: string;
 }
 export interface AiJob {
+  backfill?: boolean;
   id: string; bookId: string; chapterId: string; kind: AiTaskKind; status: AiJobStatus;
   instruction: string; inputVersion: number; inputDocument: ManuscriptDocument; inputTitle: string; inputOutline: string;
   selection: TextSelection | null; output: string; error: string | null; model: string;

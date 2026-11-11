@@ -188,6 +188,7 @@ function chapterRecord(value: unknown): Chapter {
   if (!['draft', 'final', 'revising'].includes(String(item.status))) invalid('章节状态不正确。');
   return {
     id: id(item.id), bookId: id(item.bookId), position: integer(item.position, '章节序号', 1, 100_000),
+    archivedAt: item.archivedAt == null ? null : date(item.archivedAt, '归档时间'),
     title: string(item.title, '章节标题', 200), outline: string(item.outline, '本章计划', 20_000),
     status: item.status as Chapter['status'], wordCount: countWords(text), version: integer(item.version, '草稿版本', 1),
     finalizedRevisionId: item.finalizedRevisionId === null ? null : id(item.finalizedRevisionId),
@@ -252,11 +253,12 @@ export function backup(value: unknown): WorkspaceBackup {
       }
       return { chapter, revisions };
     });
-    if (book.chapterCount !== chapters.length || book.wordCount !== chapters.reduce((sum, entry) => sum + entry.chapter.wordCount, 0)) invalid('备份中的作品统计与章节不一致。');
+    const activeChapters = chapters.filter(entry => !entry.chapter.archivedAt);
+    if (book.chapterCount !== activeChapters.length || book.wordCount !== activeChapters.reduce((sum, entry) => sum + entry.chapter.wordCount, 0)) invalid('备份中的作品统计与章节不一致。');
     let extensions: Record<string, import('@shujian/contracts').JsonValue> | undefined;
     if (entry.extensions !== undefined) {
       const raw = object(entry.extensions, '扩展备份');
-      if (Object.keys(raw).some((key) => !['ai', 'story', 'planning', 'creative', 'atlas'].includes(key))) invalid('备份包含当前版本不支持的扩展数据。');
+      if (Object.keys(raw).some((key) => !['ai', 'story', 'planning', 'creative', 'atlas', 'backfill'].includes(key))) invalid('备份包含当前版本不支持的扩展数据。');
       extensions = raw as Record<string, import('@shujian/contracts').JsonValue>;
     }
     return { book, chapters, ...(extensions ? { extensions } : {}) };

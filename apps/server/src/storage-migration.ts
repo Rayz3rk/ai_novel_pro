@@ -11,7 +11,7 @@ import { SqliteWorkspaceLock } from './sqlite-workspace-lock.js';
 const originalTables = ['books', 'chapters', 'document_revisions', 'plans', 'plan_history',
   'story_entries', 'story_events', 'story_proposals', 'story_reviews', 'story_dependencies',
   'ai_settings', 'ai_active', 'ai_config_import', 'ai_jobs', 'ai_events', 'ai_calls'] as const;
-export const workspaceTables = [...originalTables, 'creative_skills', 'creative_skill_history', 'creative_profiles', 'creative_profile_history','atlas_relations','atlas_states','atlas_events','atlas_views'] as const;
+export const workspaceTables = [...originalTables, 'creative_skills', 'creative_skill_history', 'creative_profiles', 'creative_profile_history','atlas_relations','atlas_states','atlas_events','atlas_views','manuscript_references','legacy_imports','backfill_runs'] as const;
 const quoted = (value: string) => { if (!/^[a-z_]+$/.test(value)) throw new Error('Unsupported database identifier.'); return `"${value}"`; };
 const digest = (rows: unknown[]) => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 export interface MigrationReport { source: string; target: string; backup: string; tables: Array<{ name: string; rows: number; identical: boolean }>; preservedIds: true }

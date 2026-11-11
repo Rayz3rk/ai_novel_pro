@@ -29,6 +29,9 @@ const migrations = [{
     CREATE INDEX revision_chapter_time ON document_revisions(chapter_id, created_at DESC);
     CREATE UNIQUE INDEX final_revision_once ON document_revisions(chapter_id, source_version) WHERE kind='final';
   `,
+}, {
+  version: 2,
+  sql: 'ALTER TABLE chapters ADD COLUMN archived_at TEXT; CREATE INDEX chapter_archive ON chapters(book_id,archived_at,position);',
 }];
 
 export function migrate(db: Database): void {

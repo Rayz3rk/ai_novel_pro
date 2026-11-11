@@ -37,6 +37,7 @@ export interface Book {
 }
 
 export interface ChapterSummary {
+  archivedAt?: string | null;
   id: string;
   bookId: string;
   position: number;
@@ -105,6 +106,17 @@ export interface WorkspaceBackup {
   exportedAt: string;
   books: BackupBook[];
 }
+
+export interface ChapterReference {
+  id: string; module: string; title: string; historical: boolean; path: string;
+  chapterId?: string;
+}
+export interface BackupSummary {
+  id: string; createdAt: string; bytes: number; fingerprint: string;
+  books: Array<{ title: string; chapters: number; words: number; archived: number }>;
+}
+export interface BackupCatalog { backups: BackupSummary[]; totalBytes: number; retentionDays: number }
+export interface BackupCleanup { ids: string[]; bytes: number; fingerprint: string; protectedCount: number }
 
 export function emptyDocument(): ManuscriptDocument {
   return { type: 'doc', content: [{ type: 'paragraph' }] };

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Book } from '@shujian/contracts';
 import { api, errorMessage } from './lib/api';
 import { Library } from './components/Library';
-import { Workbench, type NavigationGuard } from './components/Workbench';
+import type { NavigationGuard } from './components/Workbench';
+import { deferred } from './components/Deferred';
+const Workbench = deferred(async () => (await import('./components/Workbench')).Workbench);
 
 interface Route { bookId?: string; chapterId?: string }
 function readRoute(): Route {

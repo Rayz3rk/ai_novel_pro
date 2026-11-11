@@ -1,41 +1,54 @@
+import type { AssistantRequest } from './AiAssistant';
+import { deferred } from './Deferred';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCheck, ChevronDown, Circle, Download, FileText, History, ListTree, LoaderCircle, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Settings2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCheck, ChevronDown, Circle, Download, FileText, History, ListTree, LoaderCircle, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Settings2, Trash2, MoreHorizontal, Archive, X } from 'lucide-react';
 import { countWords, documentToText, type Book, type Chapter, type ChapterSummary, type TextSelection, type PreferenceExample } from '@shujian/contracts';
 import { api, downloadText, downloadUrl, errorMessage } from '../lib/api';
 import { useDraft } from '../hooks/useDraft';
 import { formatRecoveryText } from '../lib/recovery';
 import { ManuscriptEditor } from './ManuscriptEditor';
-import { VersionDrawer } from './VersionDrawer';
 import { BookForm } from './BookForm';
 import { Dialog } from './Dialog';
-import { AiAssistant,type AssistantRequest } from './AiAssistant';
-import { ModelSettings } from './ModelSettings';
-import { StoryLibrary } from './StoryLibrary';
-import { PlanningDesk } from './PlanningDesk';
-import { FinalizationDialog } from './FinalizationDialog';
 import { collaborationApi } from '../lib/collaboration-api';
-import { CreativeDesk } from './CreativeDesk';
-import { AtlasDesk } from './AtlasDesk';
 import type { AtlasLaunch } from '../lib/atlas-api';
 
 export type NavigationGuard = (() => Promise<void>) | null;
+const BackfillDesk = deferred(async () => (await import('./BackfillDesk')).BackfillDesk);
+const ChapterReferences = deferred(async () => (await import('./ChapterReferences')).ChapterReferences);
+const VersionDrawer = deferred(async () => (await import('./VersionDrawer')).VersionDrawer);
+
+const AiAssistant = deferred(async () => (await import('./AiAssistant')).AiAssistant);
+
+const ModelSettings = deferred(async () => (await import('./ModelSettings')).ModelSettings);
+
+const StoryLibrary = deferred(async () => (await import('./StoryLibrary')).StoryLibrary);
+
+const PlanningDesk = deferred(async () => (await import('./PlanningDesk')).PlanningDesk);
+
+const FinalizationDialog = deferred(async () => (await import('./FinalizationDialog')).FinalizationDialog);
+
+const CreativeDesk = deferred(async () => (await import('./CreativeDesk')).CreativeDesk);
+
+const AtlasDesk = deferred(async () => (await import('./AtlasDesk')).AtlasDesk);
+
 interface Props { bookId: string; chapterId?: string; onBack: () => Promise<void>; onSelect: (bookId: string, chapterId: string) => Promise<void>; registerGuard: (guard: NavigationGuard) => void }
 interface WorkspaceData { book: Book; chapters: ChapterSummary[]; chapter: Chapter }
 const statusLabel = { draft: '草稿', final: '已定稿', revising: '修订中' };
 
 export function Workbench({ bookId, chapterId, onBack, onSelect, registerGuard }: Props) {
+  const [emptyBook, setEmptyBook] = useState<Book | null>(null);
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setEmptyBook(null);
     void (async () => {
       try {
-        const [{ book }, { chapters }] = await Promise.all([api.book(bookId), api.chapters(bookId)]);
-        const selected = chapterId && chapters.some((entry) => entry.id === chapterId) ? chapterId : chapters[0]?.id;
-        if (!selected) throw new Error('这部作品还没有章节，请重新打开作品。');
+        const [{ book }, { chapters }] = await Promise.all([api.book(bookId), api.chapters(bookId, true)]);
+        const selected = chapterId && chapters.some((entry) => entry.id === chapterId) ? chapterId : chapters.find(entry => !entry.archivedAt)?.id ?? chapters[0]?.id;
+        if (!selected) { if (!cancelled) setEmptyBook(book); return; }
         const { chapter } = await api.chapter(selected);
         if (!cancelled) setData({ book, chapters, chapter });
       } catch (failure) { if (!cancelled) setError(errorMessage(failure)); }
@@ -46,11 +59,13 @@ export function Workbench({ bookId, chapterId, onBack, onSelect, registerGuard }
   const saved = useCallback((next: Chapter) => {
     setData((previous) => {
       if (!previous) return previous;
-      const oldWords = previous.chapters.find((chapter) => chapter.id === next.id)?.wordCount ?? 0;
-      return { ...previous, chapter: next, chapters: previous.chapters.map((chapter) => chapter.id === next.id ? next : chapter), book: { ...previous.book, wordCount: previous.book.wordCount - oldWords + next.wordCount, updatedAt: next.updatedAt } };
+      const updatedChapters = previous.chapters.map(entry => entry.id === next.id ? next : entry);
+      const activeChapters = updatedChapters.filter(entry => !entry.archivedAt);
+      return { ...previous, chapter: next, chapters: updatedChapters, book: { ...previous.book, chapterCount: activeChapters.length, wordCount: activeChapters.reduce((sum, entry) => sum + entry.wordCount, 0), updatedAt: next.updatedAt } };
     });
   }, []);
   if (loading) return <div className="full-state" role="status"><span className="brand-seal">间</span><LoaderCircle className="spin" size={23} /><p>正在打开你的故事……</p></div>;
+  if (emptyBook) return <div className="full-state"><BookOpen size={35} /><h2>{emptyBook.title}</h2><p>这部作品还没有章节，可以随时开始新的一章。</p>{error && <p role="alert">{error}</p>}<div className="inline-actions"><button className="button secondary" onClick={() => { void onBack(); }}>回到书架</button><button className="button primary" onClick={() => { setLoading(true); void api.createChapter(bookId).then(({chapter}) => onSelect(bookId, chapter.id)).catch(failure => setError(errorMessage(failure))).finally(() => setLoading(false)); }}><Plus size={16} />新增章节</button></div></div>;
   if (error || !data) return <div className="full-state"><BookOpen size={35} strokeWidth={1} /><h2>暂时没能打开作品</h2><p role="alert">{error}</p><div className="inline-actions"><button className="button secondary" onClick={() => { void onBack(); }}>回到书架</button><button className="button primary" onClick={() => setReload((value) => value + 1)}><RefreshCw size={16} />重试</button></div></div>;
   return <EditorSession key={data.chapter.id} {...data} onSaved={saved} onBack={onBack} onSelect={onSelect} registerGuard={registerGuard} onBookUpdated={(book) => setData((previous) => previous ? { ...previous, book } : previous)} />;
 }
@@ -63,6 +78,11 @@ function EditorSession({ book, chapters, chapter, onSaved, onBack, onSelect, reg
   const [planOpen, setPlanOpen] = useState(() => window.innerWidth > 1100);
   const [chapterMenu, setChapterMenu] = useState(false);
   const [focus, setFocus] = useState(false);
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [referencesOpen, setReferencesOpen] = useState(false);
+  const [archivesOpen, setArchivesOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [versions, setVersions] = useState(false);
   const [bookForm, setBookForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,7 +104,7 @@ function EditorSession({ book, chapters, chapter, onSaved, onBack, onSelect, reg
   const [selection, setSelection] = useState<TextSelection | null>(null);
   const [selectionTask,setSelectionTask]=useState<AssistantRequest|null>(null);
   const words = countWords(draftState.text);
-  const disabled = busy || draftState.recoveryBusy || !draftState.ready || !!draftState.recovery;
+  const disabled = !!draft.archivedAt || busy || draftState.recoveryBusy || !draftState.ready || !!draftState.recovery;
   const displayStatus = status !== 'saved' && draft.status === 'final' ? 'revising' : draft.status;
 
   useEffect(() => { registerGuard(async () => { await flush(); }); return () => registerGuard(null); }, [registerGuard, flush]);
@@ -117,9 +137,10 @@ function EditorSession({ book, chapters, chapter, onSaved, onBack, onSelect, reg
   const launchAtlasTask=(input:AtlasLaunch)=>void run(async()=>{await flush();setAtlasOpen(false);setSelection(null);setSelectionTask({...input,sequence:Date.now()});setRightTab('ai');setPlanOpen(true);setFocus(false);});
   return <div className={`workbench ${focus ? 'focus-mode' : ''} ${!planOpen ? 'plan-hidden' : ''} ${rightTab === 'ai' ? 'ai-open' : ''}`}>
     <header className="workbench-header"><div className="workbench-brand"><button className="icon-button back-library" aria-label="返回书架" onClick={() => { void run(onBack); }} disabled={busy}><ArrowLeft size={19} /></button><button className="icon-button mobile-chapters" aria-label="打开章节目录" onClick={() => setChapterMenu(true)} disabled={busy}><ListTree size={19} /></button><span className="brand-seal small">间</span><button className="book-title-button" onClick={() => setBookForm(true)} title="编辑作品设定">{book.title}<ChevronDown size={14} /></button><span className="header-divider" /><span className="chapter-breadcrumb">第 {draft.position} 章</span></div><div className="workbench-actions"><span className={`save-state ${status}`} role="status">{status === 'saving' ? <LoaderCircle size={13} className="spin" /> : status === 'saved' ? <CheckCheck size={14} /> : <Circle size={7} fill="currentColor" />}{status === 'saved' ? '已保存到本地' : status === 'saving' ? '正在保存' : status === 'conflict' ? '版本需要处理' : status === 'error' ? '尚未保存' : '等待保存'}</span><button className="text-button version-trigger" onClick={() => setVersions(true)} disabled={busy}><History size={16} />版本</button><div className="export-menu"><button className="text-button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)} disabled={busy}><Download size={16} />导出<ChevronDown size={12} /></button>{exportOpen && <div className="dropdown-menu"><button onClick={() => exportBook('txt')}>纯文本 .txt</button><button onClick={() => exportBook('md')}>Markdown .md</button></div>}</div><button className="button primary compact" disabled={disabled || words === 0} onClick={() => { void run(prepareFinalization); }}>{busy ? <LoaderCircle className="spin" size={15} /> : <Check size={16} />}定稿</button></div></header>
-    <aside className="chapters-sidebar"><div className="sidebar-book"><span className="eyebrow">正在书写</span><h2>{book.title}</h2><p>{book.genre || '你的故事，自有天地'}<span>·</span>{chapters.length} 章</p></div><div className="sidebar-section-head"><span><ListTree size={15} />章节目录</span><button className="icon-button" aria-label="新增章节" disabled={busy} onClick={() => { void run(async () => { await flush(); const result = await api.createChapter(book.id); await onSelect(book.id, result.chapter.id); }); }}><Plus size={18} /></button></div><nav className="chapter-list" aria-label="章节目录">{chapters.map((entry) => <button key={entry.id} className={`chapter-item ${entry.id === chapter.id ? 'selected' : ''}`} aria-current={entry.id === chapter.id ? 'page' : undefined} disabled={busy} onClick={() => { void run(() => onSelect(book.id, entry.id)); }}><span className="chapter-number">{String(entry.position).padStart(2, '0')}</span><span className="chapter-item-main"><strong>{entry.title}</strong><small>{entry.wordCount.toLocaleString('zh-CN')} 字{entry.status === 'final' && <Check size={11} />}</small></span>{entry.id === chapter.id && <span className="active-chapter-dot" />}</button>)}</nav><button className="add-chapter" disabled={busy} onClick={() => { void run(async () => { await flush(); const result = await api.createChapter(book.id); await onSelect(book.id, result.chapter.id); }); }}><Plus size={16} />写下一章</button><div className="sidebar-bottom"><p>每一段文字，<br />都在靠近故事的远方。</p><span>书间 · 私人的写作房间</span></div></aside>
+    <aside className="chapters-sidebar"><div className="sidebar-book"><span className="eyebrow">正在书写</span><h2>{book.title}</h2><p>{book.genre || '你的故事，自有天地'}<span>·</span>{chapters.length} 章</p></div><div className="sidebar-section-head"><span><ListTree size={15} />章节目录</span><button className="icon-button" aria-label="新增章节" disabled={busy} onClick={() => { void run(async () => { await flush(); const result = await api.createChapter(book.id); await onSelect(book.id, result.chapter.id); }); }}><Plus size={18} /></button></div><nav className="chapter-list" aria-label="章节目录">{chapters.filter(entry => !entry.archivedAt).map((entry) => <button key={entry.id} className={`chapter-item ${entry.id === chapter.id ? 'selected' : ''}`} aria-current={entry.id === chapter.id ? 'page' : undefined} disabled={busy} onClick={() => { void run(() => onSelect(book.id, entry.id)); }}><span className="chapter-number">{String(entry.position).padStart(2, '0')}</span><span className="chapter-item-main"><strong>{entry.title}</strong><small>{entry.wordCount.toLocaleString('zh-CN')} 字{entry.status === 'final' && <Check size={11} />}</small></span>{entry.id === chapter.id && <span className="active-chapter-dot" />}</button>)}</nav><button className="add-chapter" disabled={busy} onClick={() => { void run(async () => { await flush(); const result = await api.createChapter(book.id); await onSelect(book.id, result.chapter.id); }); }}><Plus size={16} />写下一章</button><button className="text-button archive-list-trigger" onClick={() => setArchivesOpen(true)}><Archive size={15} />归档章节（{chapters.filter(entry => entry.archivedAt).length}）</button><div className="sidebar-bottom"><p>每一段文字，<br />都在靠近故事的远方。</p><span>书间 · 私人的写作房间</span></div></aside>
     <main className="writing-main">
-      <div className="writing-topline"><span><FileText size={14} />正文<span className="status-pill">{statusLabel[displayStatus]}</span></span><div><button className="text-button" onClick={() => setAtlasOpen(true)}>设定与图谱</button><button className="text-button" onClick={() => setPlanningContent('')}>故事策划</button><button className="text-button" onClick={() => { setPreferenceSeed(null); setCreativeOpen(true); }}>文风与技能</button><button className="text-button" onClick={() => setStoryOpen(true)}>故事资料</button><button className="text-button" onClick={() => { setRightTab('ai'); setPlanOpen(true); setFocus(false); }}>AI 共创</button><button className="icon-button" aria-label={focus ? '退出专注模式' : '进入专注模式'} aria-pressed={focus} onClick={() => setFocus((value) => !value)}>{focus ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button className="icon-button" aria-label={planOpen ? '收起本章计划' : '展开本章计划'} aria-pressed={planOpen} onClick={() => { setRightTab('plan'); setPlanOpen((value) => !value); }}>{planOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}</button></div></div>
+      <div className="writing-topline"><span><FileText size={14} />正文<span className="status-pill">{statusLabel[displayStatus]}</span></span><div className="writing-tools"><button className="text-button mobile-tool-trigger" aria-expanded={toolsOpen} aria-label="更多工具" onClick={() => setToolsOpen(value => !value)}><MoreHorizontal size={19} />工具</button><div className={`editor-tool-menu ${toolsOpen ? 'open' : ''}`} onClick={() => setToolsOpen(false)}><button className="text-button" onClick={() => void run(async () => { await flush(); setBackfillOpen(true); })}>正文回填</button><button className="text-button" onClick={() => setReferencesOpen(true)}>引用与归档</button><button className="text-button" onClick={() => setArchivesOpen(true)}>归档章节</button><button className="text-button danger-text" disabled={busy || !draftState.ready || !!draftState.recovery || draftState.recoveryBusy} onClick={() => { setActionError(null); setDeleting(true); }}><Trash2 size={14} />删除本章</button><button className="text-button" onClick={() => setAtlasOpen(true)}>设定与图谱</button><button className="text-button" onClick={() => setPlanningContent('')}>故事策划</button><button className="text-button" onClick={() => { setPreferenceSeed(null); setCreativeOpen(true); }}>文风与技能</button><button className="text-button" onClick={() => setStoryOpen(true)}>故事资料</button><button className="text-button" onClick={() => { setRightTab('ai'); setPlanOpen(true); setFocus(false); }}>AI 共创</button><button className="icon-button" aria-label={focus ? '退出专注模式' : '进入专注模式'} aria-pressed={focus} onClick={() => setFocus((value) => !value)}>{focus ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button className="icon-button" aria-label={planOpen ? '收起本章计划' : '展开本章计划'} aria-pressed={planOpen} onClick={() => { setRightTab('plan'); setPlanOpen((value) => !value); }}>{planOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}</button></div></div></div>
+      {draft.archivedAt && <div className="notice editor-notice" role="status">此章已归档，原文与历史保留。<button className="text-button" onClick={() => setReferencesOpen(true)}>取消归档，继续写作</button></div>}
       {(error || actionError) && <div className="notice error editor-notice" role="alert"><p>{actionError ?? error}</p><div className="inline-actions">{status === 'conflict' ? <><button className="text-button" onClick={() => downloadText(formatRecoveryText(draft), `${draft.title}-本机未保存稿.txt`)}>导出本机稿</button><button className="text-button" onClick={showServer}>查看服务器稿</button></> : <button className="text-button" onClick={() => { void run(async () => { await flush(); }); }}>重试保存</button>}</div></div>}
       {draftState.recoveryWarning && <div className="notice warning editor-notice" role="alert">浏览器的应急副本暂时不可用。请保持页面打开，并确认顶部显示“已保存到本地”。</div>}
       {notice && <div className="notice success editor-notice" role="status"><p>{notice}</p><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
@@ -127,13 +148,20 @@ function EditorSession({ book, chapters, chapter, onSaved, onBack, onSelect, reg
       <div className="manuscript-scroll"><article className="manuscript-page" onCompositionStartCapture={() => setComposing(true)} onCompositionEndCapture={() => setComposing(false)}><div className="manuscript-chapter-label"><span />CHAPTER {String(draft.position).padStart(2, '0')}<span /></div><input className="chapter-title-input" aria-label="章节名称" value={draft.title} maxLength={160} disabled={disabled} onChange={(event) => update({ title: event.target.value })} placeholder="给这一章一个名字" />{draftState.ready && !recovery ? <ManuscriptEditor document={draft.document} disabled={disabled} onChange={(document) => update({ document })} onComposition={setComposing} onSelection={setSelection} onSelectionAction={(kind)=>{setSelectionTask({kind,sequence:Date.now()});setRightTab('ai');setPlanOpen(true);setFocus(false);}} /> : <div className="editor-loading">{recovery ? '请先处理上次未保存的副本，再继续写作。' : '正在检查本机草稿……'}</div>}<div className="manuscript-end"><span />间<span /></div></article></div>
       <footer className="writing-footer"><span>{words.toLocaleString('zh-CN')} 字<span className="footer-dot">·</span>约 {Math.max(1, Math.ceil(words / 500))} 分钟阅读</span><span>{status === 'saved' ? '所有改动已保存' : '请确认保存状态后离开'}<span className="footer-dot">·</span>UTF-8</span></footer>
     </main>
-    {planOpen && rightTab === 'ai' && <aside className="plan-sidebar ai-sidebar"><div className="assistant-panel-tools"><button className="text-button" onClick={() => setRightTab('plan')}>← 本章计划</button><button className="icon-button" aria-label="关闭 AI 共创" onClick={() => setPlanOpen(false)}><X size={17} /></button></div><AiAssistant creativeRevision={creativeRevision} onCreative={(seed) => { setPreferenceSeed(seed ?? null); setCreativeOpen(true); }} storyRevision={storyRevision} requestedTask={selectionTask} chapter={draft} dirty={status !== 'saved'} selection={selection} onFlush={async () => { if (recovery || !draftState.ready) throw new Error('请先处理本机恢复副本。'); return flush(); }} onApply={async (job, text, target) => { setBusy(true); try { if (recovery) throw new Error('请先处理本机恢复副本。'); await flush(); const result = await collaborationApi.applyJob(job.id, { expectedVersion: draftState.getVersion(), text, target }); replace(result.chapter); setSelection(null); } finally { setBusy(false); } }} onSettings={() => setModelSettings(true)} onStory={(content)=>{setStorySeed(content);setStoryOpen(true);}} onPlanning={setPlanningContent} /></aside>}
+    {!draft.archivedAt && planOpen && rightTab === 'ai' && <aside className="plan-sidebar ai-sidebar"><div className="assistant-panel-tools"><button className="text-button" onClick={() => setRightTab('plan')}>← 本章计划</button><button className="icon-button" aria-label="关闭 AI 共创" onClick={() => setPlanOpen(false)}><X size={17} /></button></div><AiAssistant onBackfill={() => setBackfillOpen(true)} creativeRevision={creativeRevision} onCreative={(seed) => { setPreferenceSeed(seed ?? null); setCreativeOpen(true); }} storyRevision={storyRevision} requestedTask={selectionTask} chapter={draft} dirty={status !== 'saved'} selection={selection} onFlush={async () => { if (recovery || !draftState.ready) throw new Error('请先处理本机恢复副本。'); return flush(); }} onApply={async (job, text, target) => { setBusy(true); try { if (recovery) throw new Error('请先处理本机恢复副本。'); await flush(); const result = await collaborationApi.applyJob(job.id, { expectedVersion: draftState.getVersion(), text, target }); replace(result.chapter); setSelection(null); } finally { setBusy(false); } }} onSettings={() => setModelSettings(true)} onStory={(content)=>{setStorySeed(content);setStoryOpen(true);}} onPlanning={setPlanningContent} /></aside>}
     {planningContent !== null && <PlanningDesk chapter={draft} chapters={chapters} initialContent={planningContent} onClose={() => setPlanningContent(null)} />}
     {finalization && <FinalizationDialog chapter={finalization} onClose={()=>setFinalization(null)} onFinalize={async(ids)=>{const result=await api.finalize(chapter.id,finalization.version,ids);replace(result.chapter);setFinalization(null);setNotice('这一章已定稿。继续书写时，会保留这一稿。');}} />}
     {modelSettings && <ModelSettings onClose={() => setModelSettings(false)} />}
     {storyOpen && <StoryLibrary initialContent={storySeed} chapter={draft} chapters={chapters} onClose={() => {setStoryOpen(false);setStorySeed(undefined);setStoryRevision((value)=>value+1);}} onNavigate={(id) => onSelect(book.id, id)} />}
     {planOpen && rightTab === 'plan' && <aside className="plan-sidebar"><div className="plan-heading"><div className="plan-heading-top"><span className="eyebrow">BEFORE THE WORDS</span><button type="button" className="icon-button" aria-label="关闭本章计划" onClick={() => setPlanOpen(false)}><X size={17} /></button></div><h2>这一章，写什么</h2><p>给故事一个方向，给落笔留些自由。</p></div><label className="outline-field" htmlFor="chapter-outline">本章意图<textarea id="chapter-outline" value={draft.outline} disabled={disabled} maxLength={20000} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onChange={(event) => update({ outline: event.target.value })} placeholder={'这一章要发生什么？\n谁做出了选择？\n结尾留下什么变化？'} rows={12} /></label><div className="plan-divider" /><div className="story-seed"><div><span className="eyebrow">故事的种子</span><button className="icon-button" aria-label="编辑故事设定" onClick={() => setBookForm(true)}><Settings2 size={14} /></button></div><p>{book.premise || '最初想讲的那个故事，也可以在写作中慢慢清晰。'}</p></div><div className="plan-footnote"><span>给自己的一点提醒</span><p>人物做出的选择，<br />往往比发生的事情更重要。</p></div></aside>}
     {focus && <button className="focus-exit button secondary compact" onClick={() => setFocus(false)}><Minimize2 size={15} />退出专注<span>Esc</span></button>}
+    {backfillOpen && <BackfillDesk bookId={book.id} onClose={() => setBackfillOpen(false)} onSaved={() => setStoryRevision(value => value + 1)} />}
+    {referencesOpen && <ChapterReferences chapter={draft} onClose={() => setReferencesOpen(false)} onArchive={async archived => { if (draftState.recovery || !draftState.ready) throw new Error('请先处理本机恢复副本。'); await flush(); const result = await api.archiveChapter(chapter.id, draftState.getVersion(), archived); replace(result.chapter); setReferencesOpen(false); setNotice(archived ? '章节已归档，原文及引用保留。' : '章节已取消归档，可以继续写作。'); }} onNavigate={async id => { await onSelect(book.id, id); setReferencesOpen(false); }} />}
+    {archivesOpen && <Dialog title="归档章节" subtitle="原文与全部历史仍可回查，取消归档后继续写作。" onClose={() => setArchivesOpen(false)}><div className="maintenance-body">{chapters.filter(entry => entry.archivedAt).map(entry => <button className="archived-chapter-link text-button" key={entry.id} onClick={() => void run(async () => { await onSelect(book.id, entry.id); setArchivesOpen(false); })}>第 {entry.position} 章 · {entry.title}</button>)}{!chapters.some(entry => entry.archivedAt) && <p>还没有归档章节。</p>}</div></Dialog>}
+    {deleting && <Dialog title="删除章节" subtitle={`确认删除「${draft.title}」及其全部历史版本？删除前会自动保存作品备份。章节序号将保留，避免改变故事时间线。`} busy={busy} onClose={() => setDeleting(false)}>
+      {actionError && <p className="notice error" role="alert">{actionError}<button className="text-button" onClick={() => { setDeleting(false); setReferencesOpen(true); }}>查看引用明细</button></p>}
+      <div className="dialog-footer"><button className="button quiet" disabled={busy} onClick={() => setDeleting(false)}>取消</button><button className="button danger" disabled={busy} onClick={() => { void run(async () => { await flush(); await api.deleteChapter(chapter.id, draftState.getVersion()); const active = chapters.filter(entry => !entry.archivedAt); const index = active.findIndex(entry => entry.id === chapter.id); const next = active[index + 1] ?? active[index - 1] ?? active.find(entry => entry.id !== chapter.id); if (next) await onSelect(book.id, next.id); else await onBack(); }); }}><Trash2 size={16} />确认删除章节</button></div>
+    </Dialog>}
     {versions && <VersionDrawer chapterId={chapter.id} onClose={() => setVersions(false)} onCheckpoint={async (label) => { await flush(); await api.checkpoint(chapter.id, draftState.getVersion(), label || undefined); }} onRestore={async (revision) => { setBusy(true); try { await flush(); const result = await api.restore(chapter.id, draftState.getVersion(), revision.id); replace(result.chapter); setNotice('已恢复到选定版本，恢复前的稿件也已留存。'); } finally { setBusy(false); } }} />}
     {creativeOpen && <CreativeDesk bookId={book.id} preferenceSeed={preferenceSeed} onClose={() => { setCreativeOpen(false); setPreferenceSeed(null); }} onSaved={() => setCreativeRevision((version) => version + 1)} />}
     {atlasOpen&&<AtlasDesk bookId={book.id} bookTitle={book.title} chapter={draft} chapters={chapters} onClose={()=>setAtlasOpen(false)} onSaved={()=>setStoryRevision(value=>value+1)} onAction={launchAtlasTask} onNavigate={id=>{setAtlasOpen(false);void run(async()=>{await flush();await onSelect(book.id,id);});}} onLegacy={()=>{setAtlasOpen(false);setStoryOpen(true);}} onCreative={()=>{setAtlasOpen(false);setPreferenceSeed(null);setCreativeOpen(true);}} onPlanning={()=>{setAtlasOpen(false);setPlanningContent('');}}/>}

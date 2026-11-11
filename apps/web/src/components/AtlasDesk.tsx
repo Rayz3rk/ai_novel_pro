@@ -1,3 +1,4 @@
+import { AtlasHistory, AtlasBranchComparison, type HistoryTarget } from './AtlasHistory';
 import { useCallback,useEffect,useRef,useState } from 'react';
 import { ArrowUpRight,BookOpen,Boxes,Check,Download,GitBranch,History,Link2,MapPin,Network,Plus,RefreshCw,Save,Search,StickyNote,UserRound } from 'lucide-react';
 import { documentToText,type AiJob,type AtlasBundle,type AtlasEvent,type AtlasRelation,type AtlasState,type AtlasView,type Chapter,type ChapterSummary,type DocumentRevision,type StoryEntry,type StoryEvidence } from '@shujian/contracts';
@@ -11,7 +12,6 @@ import { AtlasNodeEditor,AtlasRelationEditor,AtlasStateEditor } from './AtlasEdi
 import '../atlas.css';
 
 interface Props {bookId:string;bookTitle:string;chapter:Chapter;chapters:ChapterSummary[];onClose:()=>void;onSaved:()=>void;onAction:(input:AtlasLaunch)=>void;onNavigate:(id:string)=>void;onLegacy:()=>void;onCreative:()=>void;onPlanning:()=>void}
-type HistoryTarget={kind:'node';node:StoryEntry}|{kind:'relation';record:AtlasRelation}|{kind:'state';record:AtlasState};
 const icons={character:UserRound,location:MapPin,item:Boxes,organization:GitBranch,scene:BookOpen,note:StickyNote,rule:BookOpen,event:BookOpen,foreshadow:BookOpen,plan:BookOpen};
 
 export function AtlasDesk({bookId,bookTitle,chapter,chapters,onClose,onSaved,onAction,onNavigate,onLegacy,onCreative,onPlanning}:Props){
@@ -85,16 +85,4 @@ export function AtlasDesk({bookId,bookTitle,chapter,chapters,onClose,onSaved,onA
     {evidence&&<Dialog title="图谱资料的原文出处" subtitle={`${evidence.revision.title} · V${evidence.revision.sourceVersion}`} onClose={()=>setEvidence(null)} wide><div className="atlas-editor"><blockquote>{evidence.source.quote}</blockquote><pre className="atlas-source-prose">{documentToText(evidence.revision.document)}</pre></div></Dialog>}
     {jobPreview&&<Dialog title="关系建议的来源讨论" subtitle={`任务 ${jobPreview.id}`} onClose={()=>setJobPreview(null)} wide><div className="atlas-editor"><p>{jobPreview.instruction}</p><pre className="atlas-source-prose">{jobPreview.output}</pre></div></Dialog>}
   </Dialog>;
-}
-
-function AtlasHistory({target,onClose,onRestored}:{target:HistoryTarget;onClose:()=>void;onRestored:()=>void}){
-  const [events,setEvents]=useState<Array<{id:string;version:number;createdAt:string;snapshot:StoryEntry|AtlasRelation|AtlasState}>>([]),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
-  useEffect(()=>{let live=true;const load=async()=>{if(target.kind==='node'){const result=await collaborationApi.history(target.node.id);return result.events.map(event=>({id:event.id,version:event.version,createdAt:event.createdAt,snapshot:event.entry}));}const result=await atlasApi.history(target.kind,target.record.id);return result.events.map((event:AtlasEvent)=>({id:event.id,version:event.snapshot.version,createdAt:event.createdAt,snapshot:event.snapshot}));};void load().then(result=>{if(live)setEvents(result.reverse());}).catch(failure=>{if(live)setError(errorMessage(failure));});return()=>{live=false;};},[target]);
-  return <Dialog title="设定历史与撤销" subtitle="历史内容会保存为新版本，现有记录和来源不会被删除。" onClose={onClose} busy={busy} wide><div className="atlas-editor">{error&&<p className="notice error" role="alert">{error}</p>}{events.map(event=><details key={event.id}><summary>V{event.version} · {event.createdAt.slice(0,16).replace('T',' ')}</summary><pre className="atlas-source-prose">{JSON.stringify(event.snapshot,null,2)}</pre><button type="button" className="button secondary compact" disabled={busy} onClick={()=>{setBusy(true);setError(null);void (target.kind==='node'?atlasApi.restoreNode(target.node.id,event.id,target.node.version):atlasApi.restore(target.kind,target.record.id,event.id,target.record.version)).then(onRestored).catch(failure=>setError(errorMessage(failure))).finally(()=>setBusy(false));}}>恢复这一版</button></details>)}</div></Dialog>;
-}
-
-function AtlasBranchComparison({data,branches,current}:{data:AtlasBundle;branches:string[];current:string}){
-  const [a,setA]=useState(current),[b,setB]=useState(branches.find(value=>value!==current)??current);
-  const title=(id:string)=>data.nodes.find(node=>node.id===id)?.title??'未找到的卡片';
-  return <details className="atlas-branch-comparison"><summary>比较构思方案</summary><p className="field-help">只比较尚未确认的构思；已确认设定由各方案共用。切换和比较不会发起 AI 请求。</p><div className="atlas-compare-grid">{([{value:a,set:setA},{value:b,set:setB}]).map(({value,set},index)=><section key={index}><label className="atlas-field">方案 {index===0?'A':'B'}<select aria-label={`比较方案 ${index===0?'A':'B'}`} value={value} onChange={event=>set(event.target.value)}>{branches.map(branch=><option key={branch} value={branch}>{branch}</option>)}</select></label>{data.nodes.filter(node=>node.status==='idea'&&(node.branch??'主线')===value).map(node=><article key={node.id}><strong>{node.title} · {atlasKinds[node.kind]}</strong><p>{node.content}</p></article>)}{data.relations.filter(edge=>edge.phase==='idea'&&edge.branch===value).map(edge=><article key={edge.id}><strong>{title(edge.fromId)} {edge.symmetric?'↔':'→'} {title(edge.toId)} · {edge.label}</strong><p>{edge.description}</p></article>)}{data.states.filter(state=>state.phase==='idea'&&state.branch===value).map(state=><article key={state.id}><strong>{title(state.nodeId)} · 第 {state.fromChapter} 章起</strong><p>{state.summary}</p></article>)}</section>)}</div></details>;
 }

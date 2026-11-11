@@ -1,3 +1,5 @@
+import { AiJobDetails } from './AiJobDetails';
+import { TextDiff } from './TextDiff';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, Download, LoaderCircle, MessageSquare, Pin, Play, RefreshCw, Settings2, Square, X } from 'lucide-react';
 import { documentToText, type AiJob, type AiTaskKind, type Chapter, type ChapterReview, type StoryEntry, type TextSelection, type ModelCall, type CreativeProfile, type CreativeSkill, type SkillSelection, type CreateAiJobInput, type ContextPreview, type CleanReport, type PreferenceExample } from '@shujian/contracts';
@@ -25,14 +27,14 @@ const defaults: Record<AiTaskKind, string> = {
 interface Props {
   chapter: Chapter; dirty: boolean; selection: TextSelection | null; onFlush: () => Promise<Chapter>;
   onApply: (job: AiJob, text: string, target: 'document' | 'outline') => Promise<void>;
-  onSettings: () => void; onStory: (content?:string) => void;
+  onBackfill?: () => void; onSettings: () => void; onStory: (content?:string) => void;
   onPlanning: (text: string) => void;
   requestedTask?:AssistantRequest|null;
   storyRevision?:number;
   creativeRevision?:number; onCreative: (seed?: PreferenceExample) => void;
 }
 
-export function AiAssistant({ chapter, dirty, selection, onFlush, onApply, onSettings, onStory, onPlanning, requestedTask, storyRevision, creativeRevision, onCreative }: Props) {
+export function AiAssistant({ chapter, dirty, selection, onFlush, onApply, onSettings, onStory, onPlanning, onBackfill, requestedTask, storyRevision, creativeRevision, onCreative }: Props) {
   const [kind, setKind] = useState<AiTaskKind>('discuss');
   const [instruction, setInstruction] = useState('');
   useEffect(()=>{if(requestedTask){setKind(requestedTask.kind);setInstruction(requestedTask.instruction??(requestedTask.kind==='discuss'?'讨论我选中的这段文字：人物动机、冲突或表达还有哪些选择？':defaults[requestedTask.kind]));setAtlasSelection(requestedTask.atlas??null);if(requestedTask.voiceIds)setVoiceIds(requestedTask.voiceIds);}},[requestedTask?.sequence]);
@@ -198,7 +200,7 @@ export function AiAssistant({ chapter, dirty, selection, onFlush, onApply, onSet
         {stale && selected.kind!=='extract' && !selected.appliedVersion && <p className="notice warning">正文或章纲已经变化。这份结果可以参考，请根据当前稿重新发起，避免覆盖新编辑。</p>}
         {selected.appliedVersion && <p className="notice success"><Check size={13} />已采纳为第 {selected.appliedVersion} 稿，原稿已留在版本中。</p>}
         {selected.output || active ? <>
-          {candidateKind ? <><label className="candidate-label" htmlFor="ai-candidate">候选内容{!active && <span>本机暂存，采纳后进入作品</span>}</label><textarea id="ai-candidate" aria-label="AI 候选内容" className="candidate-text" value={candidate} readOnly={!!active || !!selected.appliedVersion} onChange={(e) => { edited.current = true; setCandidate(e.target.value); void set(`shujian:candidate:${selected.id}`,e.target.value).catch(()=>setError('候选编辑未写入本机副本，请导出后再离开。')); }} rows={Math.min(18, Math.max(7, candidate.split('\n').length))} placeholder={active ? '正在等待模型回应……' : ''} />{!active && <details className="candidate-diff"><summary>查看与原稿的差异</summary><TextDiff before={oldText} after={candidate} /></details>}</> : latestReview ? <div className="review-report"><p className="field-help">{latestReview.stale || latestReview.sourceVersion !== chapter.version || dirty ? '这份检查已过期，请检查当前正文。' : '基于当前正文快照。语义疑点由你判断。'}</p>{latestReview.issues.length ? latestReview.issues.map((issue) => <article key={issue.id}><span className={`issue-severity ${issue.severity}`}>{issue.severity === 'warning' ? '疑点' : '建议'}</span><p>{issue.message}</p>{issue.quote && <blockquote>{issue.quote}</blockquote>}</article>) : <p>本次检查未报告问题。仍建议通读当前稿。</p>}</div> : selected.kind === 'extract' && selected.status === 'succeeded' ? <div className="extraction-ready"><Check size={23} /><p>资料建议已整理，等待你确认。</p><button className="button secondary compact" onClick={() => onStory()}>查看待确认资料<ArrowRight size={13} /></button></div> : <pre className="raw-result">{selected.output || '正在等待模型回应……'}</pre>}
+          {candidateKind ? <><label className="candidate-label" htmlFor="ai-candidate">候选内容{!active && <span>本机暂存，采纳后进入作品</span>}</label><textarea id="ai-candidate" aria-label="AI 候选内容" className="candidate-text" value={candidate} readOnly={!!active || !!selected.appliedVersion} onChange={(e) => { edited.current = true; setCandidate(e.target.value); void set(`shujian:candidate:${selected.id}`,e.target.value).catch(()=>setError('候选编辑未写入本机副本，请导出后再离开。')); }} rows={Math.min(18, Math.max(7, candidate.split('\n').length))} placeholder={active ? '正在等待模型回应……' : ''} />{!active && <details className="candidate-diff"><summary>查看与原稿的差异</summary><TextDiff before={oldText} after={candidate} /></details>}</> : latestReview ? <div className="review-report"><p className="field-help">{latestReview.stale || latestReview.sourceVersion !== chapter.version || dirty ? '这份检查已过期，请检查当前正文。' : '基于当前正文快照。语义疑点由你判断。'}</p>{latestReview.issues.length ? latestReview.issues.map((issue) => <article key={issue.id}><span className={`issue-severity ${issue.severity}`}>{issue.severity === 'warning' ? '疑点' : '建议'}</span><p>{issue.message}</p>{issue.quote && <blockquote>{issue.quote}</blockquote>}</article>) : <p>本次检查未报告问题。仍建议通读当前稿。</p>}</div> : selected.backfill && selected.status === 'succeeded' ? <div className="extraction-ready"><p>正文回填候选已生成，请在专用面板确认知识、关系和状态。</p><button className="button secondary compact" onClick={onBackfill}>打开正文回填</button></div> : selected.kind === 'extract' && selected.status === 'succeeded' ? <div className="extraction-ready"><Check size={23} /><p>资料建议已整理，等待你确认。</p><button className="button secondary compact" onClick={() => onStory()}>查看待确认资料<ArrowRight size={13} /></button></div> : <pre className="raw-result">{selected.output || '正在等待模型回应……'}</pre>}
         </> : <p className="panel-empty">尚未收到正文，已保存本次任务信息。</p>}
         <div className="job-actions">
           {active ? <button className="button secondary compact" disabled={busy} onClick={() => { void run(async () => { const result = await collaborationApi.cancelJob(selected.id); updateSelected(result.job); }); }}><Square size={12} />停止生成</button> : <>
@@ -211,25 +213,9 @@ export function AiAssistant({ chapter, dirty, selection, onFlush, onApply, onSet
           {selected.output && !active && selected.chapterId === chapter.id && ['draft', 'revise'].includes(selected.kind) && <button className="text-button" disabled={busy} onClick={() => void run(async () => { const saved = await onFlush(); onCreative({ id: crypto.randomUUID(), title: '从这次改稿留下的偏好', before: selected.output.slice(0, 6000), after: saved.plainText.slice(0, 6000), reason: '', condition: '', counterExample: '', status: 'pending', sourceJobId: selected.id, sourceChapterId: saved.id }); })}>记录作者改稿偏好</button>}
         </div>
         <details className="prompt-snapshot"><summary>创作方法与实际提示快照</summary>{selected.promptSnapshot ? <><p>档案 V{selected.promptSnapshot.creativity.profileVersion} · 提示摘要 {selected.promptSnapshot.hash.slice(0, 16)}</p>{selected.promptSnapshot.creativity.skills.length ? selected.promptSnapshot.creativity.skills.map((skill) => <p key={skill.id}>{skill.definition.title} · V{skill.version} · {skill.hash.slice(0, 16)}</p>) : <p>本次未使用额外创作方法。</p>}{selected.promptSnapshot.messages.map((message, index) => <details key={index}><summary>{message.role === 'system' ? '冻结任务规则' : '实际发送的材料'}</summary><pre>{message.content}</pre></details>)}</> : <p>旧版任务未保存完整提示快照；已有材料和原始结果仍保留，不推断其完整提示。</p>}<button className="text-button" onClick={() => void run(async () => downloadJson(await creativeApi.evaluationSample(selected), `创作评测样本-${selected.id}.json`))}>导出冻结评测样本</button></details>
-        <details className="job-details"><summary>本次依据与用量</summary><dl><div><dt>正文版本</dt><dd>V{selected.inputVersion}</dd></div><div><dt>模型 / 提示版本</dt><dd>{selected.model} / {selected.promptVersion}</dd></div><div><dt>调用次数</dt><dd>{selected.usage.attempts}</dd></div><div><dt>Token · 输入 / 输出</dt><dd>{selected.usage.inputTokens ?? '未知'} / {selected.usage.outputTokens ?? '未知'}</dd></div><div><dt>估算费用</dt><dd>{selected.usage.estimatedCost === null ? '未知' : `$${selected.usage.estimatedCost.toFixed(6)} USD`}</dd></div></dl><p className="field-help">依据在请求发起时冻结。取消后服务商仍可能计费，费用以服务商账单为准。</p>{selected.priceSnapshot && <p className="field-help">计价依据：输入 {selected.priceSnapshot.inputPricePerMillion??'未知'} / 输出 {selected.priceSnapshot.outputPricePerMillion??'未知'} USD / 百万 Token。</p>}{calls.map((call)=><details className="call-record" key={call.id}><summary>第 {call.attempt} 次调用 · {stateLabels[call.status]}</summary><p>{call.model} · 输入 {call.inputTokens??'未知'} / 输出 {call.outputTokens??'未知'} Token · {call.estimatedCost===null?'费用未知':`$${call.estimatedCost.toFixed(6)} USD`}</p>{call.error&&<p>{call.error}</p>}{call.output&&<pre>{call.output}</pre>}{call.requestMessages&&<details className="prompt-snapshot"><summary>这次调用的实际提示 · {call.promptHash?.slice(0,12)}</summary>{call.requestMessages.map((message,index)=><pre key={index}>{message.role}{"\n"}{message.content}</pre>)}</details>}</details>)}<div className="context-manifest">{selected.context.map((item, index) => <details key={`${item.id}-${index}`}><summary>{item.label}{item.required && <small>必需</small>}</summary><p>{item.text}</p></details>)}</div></details>
+        <AiJobDetails selected={selected} calls={calls} />
       </div>}
     </div>
     {preview && previewInput && <ContextPreviewDialog preview={preview} busy={busy} error={previewError} onClose={() => setPreview(null)} onStart={() => void run(async () => { try { const saved = await onFlush(); if (saved.version !== previewInput.expectedVersion) throw new Error('保存稿已更新，请返回后重新预览。'); await submit({ ...previewInput, previewFingerprint: preview.fingerprint }); } catch (failure) { setPreviewError(errorMessage(failure)); throw failure; } })} />}
   </section>;
-}
-
-function TextDiff({ before, after }: { before: string; after: string }) {
-  const left = before.split('\n'); const right = after.split('\n');
-  if (before === after) return <p className="field-help">候选内容与原稿相同。</p>;
-  if (left.length * right.length > 200000) return <div className="diff-lines"><p className="diff-legend">红色为原稿，绿色为候选</p><del>{before || '（原稿为空）'}</del><ins>{after}</ins></div>;
-  const lengths: number[][] = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
-  for (let i = left.length - 1; i >= 0; i -= 1) for (let j = right.length - 1; j >= 0; j -= 1) lengths[i]![j] = left[i] === right[j] ? lengths[i + 1]![j + 1]! + 1 : Math.max(lengths[i + 1]![j]!, lengths[i]![j + 1]!);
-  const lines: Array<{ kind: 'same' | 'remove' | 'add'; text: string }> = [];
-  let i = 0; let j = 0;
-  while (i < left.length || j < right.length) {
-    if (i < left.length && j < right.length && left[i] === right[j]) { lines.push({ kind: 'same', text: left[i]! }); i += 1; j += 1; }
-    else if (j < right.length && (i === left.length || lengths[i]![j + 1]! >= lengths[i + 1]![j]!)) { lines.push({ kind: 'add', text: right[j]! }); j += 1; }
-    else { lines.push({ kind: 'remove', text: left[i]! }); i += 1; }
-  }
-  return <div className="diff-lines"><p className="diff-legend"><span>− 删去</span><span>＋ 新增</span></p>{lines.map((line, index) => line.kind === 'add' ? <ins key={index}>＋ {line.text || ' '}</ins> : line.kind === 'remove' ? <del key={index}>− {line.text || ' '}</del> : <p key={index}>{line.text || ' '}</p>)}</div>;
 }

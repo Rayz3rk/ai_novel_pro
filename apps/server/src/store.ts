@@ -22,6 +22,7 @@ interface BookRow {
   created_at: string; updated_at: string; chapter_count: number; word_count: number;
 }
 interface ChapterRow {
+  archived_at: string | null;
   id: string; book_id: string; position: number; title: string; outline: string; document: string;
   plain_text: string; word_count: number; version: number; finalized_revision_id: string | null;
   created_at: string; updated_at: string; final_title: string | null; final_outline: string | null; final_document: string | null;
@@ -33,7 +34,7 @@ interface RevisionRow {
 
 const now = (): string => new Date().toISOString();
 const BOOK_SELECT = `SELECT b.*, COUNT(c.id) AS chapter_count, COALESCE(SUM(c.word_count),0) AS word_count
-  FROM books b LEFT JOIN chapters c ON c.book_id=b.id`;
+  FROM books b LEFT JOIN chapters c ON c.book_id=b.id AND c.archived_at IS NULL`;
 const CHAPTER_SELECT = `SELECT c.*, r.title AS final_title, r.outline AS final_outline, r.document AS final_document
   FROM chapters c LEFT JOIN document_revisions r ON r.id=c.finalized_revision_id`;
 
@@ -49,7 +50,7 @@ function mapChapter(row: ChapterRow): Chapter {
   const status = row.finalized_revision_id === null ? 'draft'
     : row.title === row.final_title && row.outline === row.final_outline && row.document === row.final_document ? 'final' : 'revising';
   return {
-    id: row.id, bookId: row.book_id, position: row.position, title: row.title, outline: row.outline,
+    id: row.id, bookId: row.book_id, position: row.position, title: row.title, outline: row.outline, archivedAt: row.archived_at,
     document: JSON.parse(row.document) as ManuscriptDocument, plainText: row.plain_text,
     wordCount: row.word_count, version: row.version, finalizedRevisionId: row.finalized_revision_id,
     status, createdAt: row.created_at, updatedAt: row.updated_at,
@@ -142,9 +143,19 @@ export class Store {
     return this.getBook(id);
   }
 
-  listChapters(bookId: string): ChapterSummary[] {
+  listChapters(bookId: string, includeArchived = false): ChapterSummary[] {
     this.getBook(bookId);
-    return (this.db.prepare(`${CHAPTER_SELECT} WHERE c.book_id=? ORDER BY c.position`).all(bookId) as ChapterRow[]).map((row) => chapterSummary(mapChapter(row)));
+    return (this.db.prepare(`${CHAPTER_SELECT} WHERE c.book_id=? ${includeArchived ? '' : 'AND c.archived_at IS NULL'} ORDER BY c.position`).all(bookId) as ChapterRow[]).map((row) => chapterSummary(mapChapter(row)));
+  }
+
+  archiveChapter(id: string, expectedVersion: number, archived: boolean): Chapter {
+    return this.db.transaction(() => {
+      const chapter = this.getChapter(id);
+      if (chapter.version !== expectedVersion) conflict(chapter.version);
+      this.db.prepare('UPDATE chapters SET archived_at=?,version=version+1,updated_at=? WHERE id=?').run(archived ? now() : null, now(), id);
+      this.touchBook(chapter.bookId);
+      return this.getChapter(id);
+    })();
   }
 
   getChapter(id: string): Chapter {
@@ -180,6 +191,7 @@ export class Store {
 
   private expected(id: string, expectedVersion: number): Chapter {
     const chapter = this.getChapter(id);
+    if (chapter.archivedAt) throw new AppError(409, 'CHAPTER_ARCHIVED', '此章已归档，请先取消归档后再修改。');
     if (chapter.version !== expectedVersion) conflict(chapter.version);
     return chapter;
   }
@@ -259,13 +271,13 @@ export class Store {
     }).deferred();
   }
 
-  backup(): WorkspaceBackup {
+  backup(bookId?: string): WorkspaceBackup {
     return this.db.transaction((): WorkspaceBackup => ({
       format: 'shujian-backup', version: 1, exportedAt: now(),
-      books: this.listBooks().map((book) => ({
+      books: (bookId ? [this.getBook(bookId)] : this.listBooks()).map((book) => ({
         book,
         ...(this.backupExtensions ? { extensions: this.backupExtensions.exportBook(book.id) } : {}),
-        chapters: this.listChapters(book.id).map((chapter) => ({
+        chapters: this.listChapters(book.id, true).map((chapter) => ({
           chapter: this.getChapter(chapter.id), revisions: this.listRevisions(chapter.id).map((revision) => this.getRevision(chapter.id, revision.id)),
         })),
       })),
@@ -295,6 +307,7 @@ export class Store {
             document: JSON.stringify(chapter.document), plainText: chapter.plainText, wordCount: chapter.wordCount,
             version: chapter.version, finalizedRevisionId: null, createdAt: chapter.createdAt, updatedAt: chapter.updatedAt,
           });
+          if (chapter.archivedAt) this.db.prepare('UPDATE chapters SET archived_at=? WHERE id=?').run(chapter.archivedAt, chapterId);
           for (const revision of chapterEntry.revisions) {
             this.insertRevisionRow({
               id: revisionIds.get(revision.id)!, chapterId, label: revision.label, kind: revision.kind,

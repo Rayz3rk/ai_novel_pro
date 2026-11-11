@@ -1,4 +1,4 @@
-import type { ApiErrorBody, Book, Chapter, ChapterSummary, CreateBookInput, DocumentRevision, RevisionSummary, SaveDraftInput, StorageInfo, UpdateBookInput, WorkspaceBackup } from '@shujian/contracts';
+import type { ApiErrorBody, Book, Chapter, ChapterSummary, CreateBookInput, DocumentRevision, RevisionSummary, SaveDraftInput, StorageInfo, UpdateBookInput, WorkspaceBackup, ChapterReference, BackupSummary, BackupCatalog, BackupCleanup } from '@shujian/contracts';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly code: string, public readonly status: number, public readonly currentVersion?: number) {
@@ -29,10 +29,21 @@ export const api = {
   storage: () => request<{ storage: StorageInfo }>('/storage'),
   selectStorage: (driver: StorageInfo['driver']) => request<{ storage: StorageInfo }>('/storage/preference', { driver }, 'PUT'),
   books: () => request<{ books: Book[] }>('/books'),
+  deleteBook: (id: string, title: string) => request<{ deleted: boolean }>(`/books/${id}`, { title }, 'DELETE'),
+  deleteChapter: (id: string, expectedVersion: number) => request<{ deleted: boolean }>(`/chapters/${id}`, { expectedVersion }, 'DELETE'),
   createBook: (input: CreateBookInput) => request<{ book: Book }>('/books', input, 'POST'),
   book: (id: string) => request<{ book: Book }>(`/books/${id}`),
   updateBook: (id: string, input: UpdateBookInput) => request<{ book: Book }>(`/books/${id}`, input, 'PATCH'),
-  chapters: (bookId: string) => request<{ chapters: ChapterSummary[] }>(`/books/${bookId}/chapters`),
+  chapters: (bookId: string, includeArchived = false) => request<{ chapters: ChapterSummary[] }>(`/books/${bookId}/chapters${includeArchived ? '?includeArchived=true' : ''}`),
+  references: (id: string) => request<{ references: ChapterReference[] }>(`/chapters/${id}/references`),
+  archiveChapter: (id: string, expectedVersion: number, archived: boolean) => request<{ chapter: Chapter }>(`/chapters/${id}/archive`, { expectedVersion, archived }, 'PUT'),
+  backups: () => request<BackupCatalog>('/backups'),
+  createBackup: () => request<{ backup: BackupSummary }>('/backups', {}, 'POST'),
+  backupPreview: (id: string) => request<{ backup: BackupSummary }>(`/backups/preview?id=${encodeURIComponent(id)}`),
+  restoreLocalBackup: (id: string, fingerprint: string) => request<{ books: Book[] }>('/backups/restore', { id, fingerprint }, 'POST'),
+  backupSettings: (retentionDays: number) => request<{ retentionDays: number }>('/backups/settings', { retentionDays }, 'PUT'),
+  cleanupPreview: () => request<BackupCleanup>('/backups/cleanup'),
+  cleanupBackups: (fingerprint: string) => request<{ deleted: number }>('/backups/cleanup', { fingerprint }, 'POST'),
   createChapter: (bookId: string) => request<{ chapter: Chapter }>(`/books/${bookId}/chapters`, {}, 'POST'),
   chapter: (id: string) => request<{ chapter: Chapter }>(`/chapters/${id}`),
   saveDraft: (id: string, input: SaveDraftInput) => request<{ chapter: Chapter }>(`/chapters/${id}/draft`, input, 'PUT'),
